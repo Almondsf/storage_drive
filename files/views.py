@@ -3,10 +3,35 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
-from .models import File, Folder
+from .models import File, Folder, SharedLink
 from .permissions import IsOwner, get_valid_share_link
 from .serializers import FileUploadSerializer, FileListSerializer, FolderSerializer, FolderCreateSerializer, SharedLinkCreateSerializer, SharedLinkSerializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+from drf_spectacular.types import OpenApiTypes
 
+@extend_schema(
+    tags=["Files"],
+    summary="Upload a file",
+    description=(
+        "Upload a file using multipart/form-data. "
+        "Optionally provide a folder UUID to place the file inside a folder. "
+        "Omit folder to place at root level."
+    ),
+    request={
+        "multipart/form-data": {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "format": "binary"},
+                "folder": {"type": "string", "format": "uuid", "nullable": True},
+            },
+            "required": ["file"],
+        }
+    },
+    responses={
+        201: FileUploadSerializer,
+        400: OpenApiResponse(description="Validation error — file too large or type not allowed"),
+    },
+)
 class FileUploadView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes_override = None 
@@ -20,7 +45,22 @@ class FileUploadView(views.APIView):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+@extend_schema(
+    tags=["Files"],
+    summary="List files",
+    description="Returns files owned by the authenticated user. Defaults to root level files.",
+    parameters=[
+        OpenApiParameter(
+            name="folder",
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.QUERY,
+            description="Filter by folder UUID. Omit for root level files.",
+            required=False,
+        )
+    ],
+    responses={200: FileListSerializer(many=True)},
+)
 class FileListView(generics.ListAPIView):
     serializer_class = FileListSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -42,6 +82,15 @@ class FileListView(generics.ListAPIView):
 
         return queryset
 
+@extend_schema(
+    tags=["Files"],
+    summary="Download a file",
+    description="Streams the file content. Only the file owner can use this endpoint.",
+    responses={
+        200: OpenApiResponse(description="File stream with correct Content-Type header"),
+        404: OpenApiResponse(description="File not found or not owned by user"),
+    },
+)
 class FileDownloadView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
     
@@ -67,7 +116,8 @@ class FileDownloadView(views.APIView):
         response["Content-Length"] = file_obj.size
 
         return response
-    
+ 
+@extend_schema(tags=["Files"])   
 class FileDeleteView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -82,7 +132,8 @@ class FileDeleteView(views.APIView):
         # instead of writing the entire row — more efficient
 
         return Response({"detail": "File moved to trash."}, status=status.HTTP_200_OK)
-    
+
+@extend_schema(tags=["Folders"])    
 class FolderListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -110,6 +161,7 @@ class FolderListCreateView(generics.ListCreateAPIView):
 
         return queryset
 
+@extend_schema(tags=["Folders"])
 class FolderDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -148,6 +200,7 @@ class FolderDetailView(generics.RetrieveUpdateDestroyAPIView):
             deleted_at=now
         )
         
+@extend_schema(tags=["Files"])        
 class FileMoveView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -178,7 +231,7 @@ class FileMoveView(views.APIView):
 from .permissions import IsOwner, get_valid_share_link
 from .serializers import SharedLinkCreateSerializer, SharedLinkSerializer
 
-
+@extend_schema(tags=["Sharing"])
 class ShareFileView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -204,7 +257,7 @@ class ShareFileView(views.APIView):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+@extend_schema(tags=["Sharing"])
 class SharedLinkListView(generics.ListAPIView):
     serializer_class = SharedLinkSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -218,7 +271,7 @@ class SharedLinkListView(generics.ListAPIView):
         )
         return SharedLink.objects.filter(file=file_obj).order_by("-created_at")
 
-
+@extend_schema(tags=["Sharing"])
 class SharedLinkRevokeView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -234,7 +287,20 @@ class SharedLinkRevokeView(views.APIView):
             status=status.HTTP_200_OK
         )
 
-
+@extend_schema(
+    tags=["Sharing"],
+    summary="Access a shared file",
+    description=(
+        "Access a file shared with the authenticated user. "
+        "Response depends on permission tier: "
+        "'view' returns metadata only. "
+        "'download' or 'edit' streams the file."
+    ),
+    responses={
+        200: OpenApiResponse(description="File metadata (view) or file stream (download/edit)"),
+        403: OpenApiResponse(description="No valid share link found for this user"),
+    },
+)
 class SharedFileAccessView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -263,10 +329,6 @@ class SharedFileAccessView(views.APIView):
         return self._stream_file(file_obj)
 
     def _stream_file(self, file_obj):
-        """
-        Private helper to avoid repeating FileResponse setup.
-        Prefixing with _ signals it's internal to this class.
-        """
         file_handle = file_obj.file.open("rb")
         response = FileResponse(
             file_handle,
@@ -276,21 +338,31 @@ class SharedFileAccessView(views.APIView):
         response["Content-Length"] = file_obj.size
         return response
 
-
+@extend_schema(
+    tags=["Sharing"],
+    summary="Public shared file access",
+    description=(
+        "Access a file via a public share token. No authentication required for public links. "
+        "User-specific links require the correct authenticated user. "
+        "Returns metadata for 'view' links, streams file for 'download'/'edit' links."
+    ),
+    parameters=[
+        OpenApiParameter(
+            name="token",
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.PATH,
+            description="The share token from the share link URL.",
+        )
+    ],
+    responses={
+        200: OpenApiResponse(description="File metadata or file stream"),
+        401: OpenApiResponse(description="Authentication required for user-specific link"),
+        403: OpenApiResponse(description="This link was not shared with you"),
+        410: OpenApiResponse(description="Share link has expired"),
+    },
+    auth=[],  # marks this endpoint as public in Swagger UI — no lock icon
+)
 class PublicSharedFileView(views.APIView):
-    """
-    GET /api/shared/<token>/
-
-    Public token access — no authentication required.
-    Behaviour depends on the link's permission tier:
-
-    view     → returns file metadata only
-    download → streams the file
-    edit     → streams the file (download implied)
-
-    For user-specific links, authentication is still required
-    and the requesting user must be the intended recipient.
-    """
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, token):

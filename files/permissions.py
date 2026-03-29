@@ -30,7 +30,7 @@ def get_valid_share_link(file_obj, user, required_permission="view"):
     )
 
     for link in candidates:
-        if has_required_permission(link_permission, required_permission):
+        if has_required_permission(link.permission, required_permission):
             return link
 
     return None

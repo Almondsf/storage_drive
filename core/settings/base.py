@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     # Our apps
     "accounts",
     "files",
@@ -101,8 +102,31 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
+SPECTACULAR_SETTINGS = {
+    "TITLE": "StorageDrive API",
+    "DESCRIPTION": "A Google Drive-style file storage backend built with DRF.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": "/api/",
+
+    # Tell Swagger UI about JWT Bearer auth
+    # This adds an "Authorize" button to the UI where you paste your token
+    "SECURITY": [{"BearerAuth": []}],
+    "COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "Paste your access token here. Get one from POST /api/auth/token/",
+            }
+        }
+    },
+}
 from datetime import timedelta
 
 SIMPLE_JWT = {
