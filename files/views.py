@@ -1,13 +1,15 @@
 import os
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, permissions, status, views
+from rest_framework import generics, permissions, status, views, filters
 from rest_framework.response import Response
 from .models import File, Folder, SharedLink
 from .permissions import IsOwner, get_valid_share_link
 from .serializers import FileUploadSerializer, FileListSerializer, FolderSerializer, FolderCreateSerializer, SharedLinkCreateSerializer, SharedLinkSerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
+from django_filters.rest_framework import DjangoFilterBackend
+from .filters import FileFilter, FolderFilter
 
 @extend_schema(
     tags=["Files"],
@@ -49,38 +51,44 @@ class FileUploadView(views.APIView):
 @extend_schema(
     tags=["Files"],
     summary="List files",
-    description="Returns files owned by the authenticated user. Defaults to root level files.",
+    description=(
+        "List files owned by the authenticated user. "
+        "Supports filtering by name, mime type, folder, size, and date. "
+        "Supports ordering by name, size, created_at."
+    ),
     parameters=[
-        OpenApiParameter(
-            name="folder",
-            type=OpenApiTypes.UUID,
-            location=OpenApiParameter.QUERY,
-            description="Filter by folder UUID. Omit for root level files.",
-            required=False,
-        )
+        OpenApiParameter("search", str, description="Search by name or mime type"),
+        OpenApiParameter("mime_type", str, description="Filter by mime type (partial match)"),
+        OpenApiParameter("folder", OpenApiTypes.UUID, description="Filter by folder UUID"),
+        OpenApiParameter("folder_null", bool, description="true = root files only"),
+        OpenApiParameter("created_after", OpenApiTypes.DATETIME, description="Files created after this date"),
+        OpenApiParameter("created_before", OpenApiTypes.DATETIME, description="Files created before this date"),
+        OpenApiParameter("min_size", int, description="Minimum file size in bytes"),
+        OpenApiParameter("max_size", int, description="Maximum file size in bytes"),
+        OpenApiParameter("ordering", str, description="Order by: name, size, created_at (prefix - for descending)"),
     ],
-    responses={200: FileListSerializer(many=True)},
 )
 class FileListView(generics.ListAPIView):
     serializer_class = FileListSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    # Attach the filter backends
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_class = FileFilter
+
+    # Which fields can be used for ordering
+    ordering_fields = ["name", "size", "created_at"]
+
+    # Default ordering — newest files first
+    ordering = ["-created_at"]
+
     def get_queryset(self):
-        # Base queryset — only this user's non-deleted files
-        queryset = File.objects.filter(
+        # Base queryset — always scoped to the current user
+        # The filter class handles everything else
+        return File.objects.filter(
             owner=self.request.user,
             is_deleted=False
         )
-
-        # Optional folder filter via query param: /api/files/?folder=<uuid>
-        folder_id = self.request.query_params.get("folder")
-        if folder_id:
-            queryset = queryset.filter(folder__id=folder_id)
-        else:
-            # No folder param = root level files
-            queryset = queryset.filter(folder=None)
-
-        return queryset
 
 @extend_schema(
     tags=["Files"],
@@ -133,34 +141,26 @@ class FileDeleteView(views.APIView):
 
         return Response({"detail": "File moved to trash."}, status=status.HTTP_200_OK)
 
-@extend_schema(tags=["Folders"])    
+@extend_schema(tags=["Folders"])
 class FolderListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_class = FolderFilter
+    ordering_fields = ["name", "created_at"]
+    ordering = ["-created_at"]
 
     def get_serializer_class(self):
         if self.request.method == "POST":
             return FolderCreateSerializer
         return FolderSerializer
-    
+
     def get_queryset(self):
-        user = self.request.user
-        parent_id = self.request.query_params.get("parent")
-
-        queryset = Folder.objects.filter(
-            owner=user,
+        return Folder.objects.filter(
+            owner=self.request.user,
             is_deleted=False
-        ).prefetch_related(
-            "subfolders",
-            "files"
-        )
+        ).prefetch_related("subfolders", "files")
         
-        if parent_id:
-            queryset = queryset.filter(parent__id=parent_id)
-        else:
-            queryset = queryset.filter(parent=None)
-
-        return queryset
-
 @extend_schema(tags=["Folders"])
 class FolderDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
