@@ -10,6 +10,8 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiRespon
 from drf_spectacular.types import OpenApiTypes
 from django_filters.rest_framework import DjangoFilterBackend
 from .filters import FileFilter, FolderFilter
+from .tasks import send_share_notification
+
 
 @extend_schema(
     tags=["Files"],
@@ -238,7 +240,6 @@ class ShareFileView(views.APIView):
     def post(self, request, pk):
         file_obj = get_object_or_404(File, pk=pk, is_deleted=False)
 
-        # Manual ownership check — only owner can share
         if file_obj.owner != request.user:
             return Response(
                 {"detail": "You do not own this file."},
@@ -251,12 +252,23 @@ class ShareFileView(views.APIView):
         )
         if serializer.is_valid():
             link = serializer.save(file=file_obj, created_by=request.user)
+
+            # Fire the email notification in the background
+            # .delay() sends it to Celery — this line returns immediately
+            if link.shared_with:
+                send_share_notification.delay(
+                    file_id=str(file_obj.id),
+                    shared_with_id=link.shared_with.id,
+                    permission=link.permission,
+                    sharer_username=request.user.username,
+                )
+
             return Response(
                 SharedLinkSerializer(link, context={"request": request}).data,
                 status=status.HTTP_201_CREATED
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    
 @extend_schema(tags=["Sharing"])
 class SharedLinkListView(generics.ListAPIView):
     serializer_class = SharedLinkSerializer

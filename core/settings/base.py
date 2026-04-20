@@ -43,11 +43,14 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     # Third party
+    
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "django_celery_results",
     "django_filters",
     "drf_spectacular",
+    "django_celery_beat",
     # Our apps
     "accounts",
     "files",
@@ -150,6 +153,41 @@ SIMPLE_JWT = {
     "USER_ID_CLAIM": "user_id",
 
     "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# Celery reads the broker URL from your .env
+CELERY_BROKER_URL = env("REDIS_URL")
+
+# Store task results in the database (django-celery-results)
+CELERY_RESULT_BACKEND = "django-db"
+
+# Task serialization format
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+
+# Timezone awareness
+CELERY_TIMEZONE = "UTC"
+
+CELERY_BROKER_URL = env("REDIS_URL")
+CELERY_RESULT_BACKEND = "django-db"
+
+# Required for rediss:// (TLS) connections
+CELERY_BROKER_USE_SSL = {
+    "ssl_cert_reqs": None  # disables strict cert checking — fine for Redis Cloud
+}
+CELERY_REDIS_BACKEND_USE_SSL = {
+    "ssl_cert_reqs": None
+}
+
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-deleted-files-daily": {
+        "task": "files.tasks.cleanup_deleted_files",
+        # Runs every day at 2:00 AM UTC
+        "schedule": crontab(hour=2, minute=0),
+    },
 }
 
 # Password validation
