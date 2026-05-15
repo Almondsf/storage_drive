@@ -10,10 +10,6 @@ def cleanup_deleted_files():
     """
     Permanently deletes files that have been soft-deleted
     for more than 30 days.
-
-    This runs on a schedule (we'll set that up next).
-    Users get 30 days to restore from trash — after that,
-    the file is gone from disk and the DB row is removed.
     """
     from .models import File
     from django.core.files.storage import default_storage
@@ -46,10 +42,6 @@ def cleanup_deleted_files():
 def send_share_notification(file_id, shared_with_id, permission, sharer_username):
     """
     Sends an email to a user when a file is shared with them.
-
-    Called asynchronously from ShareFileView after the
-    SharedLink is created — so the API response returns
-    immediately without waiting for the mail server.
     """
     from django.contrib.auth import get_user_model
     from django.core.mail import send_mail

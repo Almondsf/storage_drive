@@ -70,15 +70,7 @@ class FileFilter(django_filters.FilterSet):
         ]
 
     def filter_search(self, queryset, name, value):
-        """
-        Custom filter method for the search param.
-
-        When ?search=report is in the URL, this method is called.
-        We use Q objects to search across multiple fields with OR.
-
-        'name' is the filter field name ("search") — not used directly here.
-        'value' is whatever the client sent (?search=<value>).
-        """
+        
         return queryset.filter(
             Q(name__icontains=value) |
             Q(mime_type__icontains=value)
@@ -86,11 +78,6 @@ class FileFilter(django_filters.FilterSet):
 
 
 class FolderFilter(django_filters.FilterSet):
-    """
-    Filters for the folder list endpoint.
-    Simpler than FileFilter — folders have fewer searchable properties.
-    """
-
     # ?search=documents
     search = django_filters.CharFilter(method="filter_search", label="Search")
 
